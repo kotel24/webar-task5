@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Задание 5</title>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="overlay">
+    <button id="start">Запустить AR</button>
+
+    <div id="panel" style="position: fixed; left: 0; right: 0; bottom: 0; padding: 12px; text-align: center; background: rgba(0, 0, 0, 0.5);">
+      <select id="model">
+        <option value="cube">Куб</option>
+        <option value="astronaut.glb">Астронавт</option>
+        <option value="helmet.glb">Шлем</option>
+      </select>
+      <input id="color" type="color" value="#ff5533">
+      <button id="rotate-left">⟲</button>
+      <button id="rotate-right">⟳</button>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
+
+    class ModelManager {
+      constructor(scene) {
+        this.loader = new GLTFLoader();
+        this.size = 0.3;
+        this.holder = new THREE.Group();
+        this.holder.visible = false;
+        scene.add(this.holder);
+        this.setModel('cube');
+      }
+
+      async setModel(name) {
+        const model = name === 'cube' ? this.createCube() : (await this.loader.loadAsync(name)).scene;
+        this.fitToSize(model);
+        this.holder.clear();
+        this.holder.add(model);
+      }
+
+      createCube() {
+        return new THREE.Mesh(
+          new THREE.BoxGeometry(1, 1, 1),
+          new THREE.MeshStandardMaterial({ color: 0xff5533, metalness: 0.6, roughness: 0.3 })
+        );
+      }
+
+      fitToSize(model) {
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        model.scale.setScalar(this.size / Math.max(size.x, size.y, size.z));
+        box.setFromObject(model);
+        const center = box.getCenter(new THREE.Vector3());
+        model.position.set(-center.x, -box.min.y, -center.z);
+      }
+
+      setColor(value) {
+        this.holder.traverse((child) => {
+          if (child.isMesh) {
+            child.material.color.set(value);
+          }
+        });
+      }
+
+      rotate(angle) {
+        this.holder.rotation.y += angle;
+      }
+
+      placeAt(matrix) {
+        this.holder.position.setFromMatrixPosition(matrix);
+        this.holder.visible = true;
+      }
+    }
+
+    class ARPlacement {
+      constructor(renderer, scene, onPlace) {
+        this.renderer = renderer;
+        this.onPlace = onPlace;
+        this.hitTestSource = null;
+
+        this.reticle = new THREE.Mesh(
+          new THREE.RingGeometry(0.08, 0.1, 32).rotateX(-Math.PI / 2),
+          new THREE.MeshBasicMaterial({ color: 0x00ff88 })
+        );
+        this.reticle.matrixAutoUpdate = false;
+        this.reticle.visible = false;
+        scene.add(this.reticle);
+      }
+
+      async start(overlay) {
+        const supported = navigator.xr && await navigator.xr.isSessionSupported('immersive-ar');
+        if (!supported) {
+          alert('Это устройство не поддерживает WebXR AR');
+          return;
+        }
+
+        const session = await navigator.xr.requestSession('immersive-ar', {
+          requiredFeatures: ['hit-test'],
+          optionalFeatures: ['local-floor', 'dom-overlay'],
+          domOverlay: { root: overlay }
+        });
+        await this.renderer.xr.setSession(session);
+
+        const viewerSpace = await session.requestReferenceSpace('viewer');
+        this.hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+
+        session.addEventListener('select', () => {
+          if (this.reticle.visible) {
+            this.onPlace(this.reticle.matrix);
+          }
+        });
+
+        session.addEventListener('end', () => {
+          this.hitTestSource = null;
+          this.reticle.visible = false;
+        });
+      }
+
+      update(frame) {
+        if (!frame || !this.hitTestSource) {
+          return;
+        }
+        const results = frame.getHitTestResults(this.hitTestSource);
+        if (results.length > 0) {
+          const pose = results[0].getPose(this.renderer.xr.getReferenceSpace());
+          this.reticle.matrix.fromArray(pose.transform.matrix);
+          this.reticle.visible = true;
+        } else {
+          this.reticle.visible = false;
+        }
+      }
+    }
+
+    class ControlPanel {
+      constructor(models) {
+        const panel = document.getElementById('panel');
+        panel.addEventListener('beforexrselect', (event) => event.preventDefault());
+
+        document.getElementById('model').addEventListener('change', (event) => models.setModel(event.target.value));
+        document.getElementById('color').addEventListener('input', (event) => models.setColor(event.target.value));
+        document.getElementById('rotate-left').addEventListener('click', () => models.rotate(Math.PI / 8));
+        document.getElementById('rotate-right').addEventListener('click', () => models.rotate(-Math.PI / 8));
+      }
+    }
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    new HDRLoader().load('studio.hdr', (texture) => {
+      texture.mapping = THREE.EquirectangularReflectionMapping;
+      scene.environment = texture;
+    });
+
+    const models = new ModelManager(scene);
+    const placement = new ARPlacement(renderer, scene, (matrix) => models.placeAt(matrix));
+    new ControlPanel(models);
+
+    const startButton = document.getElementById('start');
+    startButton.addEventListener('click', () => {
+      placement.start(document.getElementById('overlay'))
+        .then(() => { startButton.hidden = true; })
+        .catch((error) => alert(`Не удалось запустить AR: ${error.message}`));
+    });
+    renderer.xr.addEventListener('sessionend', () => { startButton.hidden = false; });
+
+    renderer.setAnimationLoop((time, frame) => {
+      placement.update(frame);
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>
