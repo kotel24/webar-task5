@@ -20,8 +20,8 @@
     <div id="panel" style="position: fixed; left: 0; right: 0; bottom: 0; padding: 12px; text-align: center; background: rgba(0, 0, 0, 0.5);">
       <select id="model">
         <option value="cube">Куб</option>
-        <option value="astronaut.glb">Астронавт</option>
-        <option value="helmet.glb">Шлем</option>
+        <option value="tetrahedron">Тетраэдр</option>
+        <option value="oval">Овал</option>
       </select>
       <input id="color" type="color" value="#ff5533">
       <button id="rotate-left">⟲</button>
@@ -31,48 +31,36 @@
 
   <script type="module">
     import * as THREE from 'three';
-    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 
     class ModelManager {
       constructor(scene) {
-        this.loader = new GLTFLoader();
-        this.size = 0.3;
+        this.material = new THREE.MeshStandardMaterial({ color: 0xff5533, metalness: 0.6, roughness: 0.3 });
         this.holder = new THREE.Group();
         this.holder.visible = false;
         scene.add(this.holder);
         this.setModel('cube');
       }
 
-      async setModel(name) {
-        const model = name === 'cube' ? this.createCube() : (await this.loader.loadAsync(name)).scene;
-        this.fitToSize(model);
+      setModel(name) {
         this.holder.clear();
-        this.holder.add(model);
+        this.holder.add(new THREE.Mesh(this.createGeometry(name), this.material));
       }
 
-      createCube() {
-        return new THREE.Mesh(
-          new THREE.BoxGeometry(1, 1, 1),
-          new THREE.MeshStandardMaterial({ color: 0xff5533, metalness: 0.6, roughness: 0.3 })
-        );
-      }
-
-      fitToSize(model) {
-        const box = new THREE.Box3().setFromObject(model);
-        const size = box.getSize(new THREE.Vector3());
-        model.scale.setScalar(this.size / Math.max(size.x, size.y, size.z));
-        box.setFromObject(model);
-        const center = box.getCenter(new THREE.Vector3());
-        model.position.set(-center.x, -box.min.y, -center.z);
+      createGeometry(name) {
+        if (name === 'tetrahedron') {
+          const geometry = new THREE.ConeGeometry(0.17, 0.24, 3).toNonIndexed();
+          geometry.computeVertexNormals();
+          return geometry.translate(0, 0.12, 0);
+        }
+        if (name === 'oval') {
+          return new THREE.SphereGeometry(0.15, 32, 16).scale(1, 0.6, 0.6).translate(0, 0.09, 0);
+        }
+        return new THREE.BoxGeometry(0.2, 0.2, 0.2).translate(0, 0.1, 0);
       }
 
       setColor(value) {
-        this.holder.traverse((child) => {
-          if (child.isMesh) {
-            child.material.color.set(value);
-          }
-        });
+        this.material.color.set(value);
       }
 
       rotate(angle) {
